@@ -14,10 +14,10 @@ const bot = new TelegramBot(TOKEN, {
 
 console.log("🤖 Bot Anti No Username + Captcha Aktif...");
 
-// Simpan user yg lagi captcha
+// Simpan user captcha
 const captchaUsers = new Map();
 
-// Handle user join
+// ================= HANDLE JOIN =================
 bot.on("message", async (msg) => {
   try {
 
@@ -31,27 +31,32 @@ bot.on("message", async (msg) => {
 
       // 1. Tanpa username = BAN
       if (!user.username) {
-        await bot.banChatMember(chatId, userId);
+        await bot.banChatMember(chatId, userId, {
+          revoke_messages: true
+        });
+
         console.log("Blocked (no username):", userId);
         continue;
       }
 
-      // 2. Mute user
+      // 2. MUTE user (permissions versi baru)
       await bot.restrictChatMember(chatId, userId, {
-        can_send_messages: false,
-        can_send_media_messages: false,
-        can_send_polls: false,
-        can_send_other_messages: false,
-        can_add_web_page_previews: false,
-        can_change_info: false,
-        can_invite_users: false,
-        can_pin_messages: false
+        permissions: {
+          can_send_messages: false,
+          can_send_media_messages: false,
+          can_send_polls: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+          can_change_info: false,
+          can_invite_users: false,
+          can_pin_messages: false
+        }
       });
 
       // 3. Kirim captcha
       const sent = await bot.sendMessage(
         chatId,
-        `👋 Halo ${user.first_name}!\n\nKlik tombol di bawah untuk verifikasi 👇`,
+        `👋 Halo ${user.first_name || "User"}!\n\nKlik tombol di bawah untuk verifikasi 👇`,
         {
           reply_markup: {
             inline_keyboard: [
@@ -66,7 +71,7 @@ bot.on("message", async (msg) => {
         }
       );
 
-      // Simpan data
+      // Simpan data captcha
       captchaUsers.set(userId, {
         chatId,
         msgId: sent.message_id
@@ -78,10 +83,18 @@ bot.on("message", async (msg) => {
         if (!captchaUsers.has(userId)) return;
 
         try {
-          await bot.banChatMember(chatId, userId);
+
+          await bot.banChatMember(chatId, userId, {
+            revoke_messages: true
+          });
+
           captchaUsers.delete(userId);
+
           console.log("Blocked (timeout):", userId);
-        } catch (e) {}
+
+        } catch (e) {
+          console.log("Timeout ban error:", e.message);
+        }
 
       }, 60000);
     }
@@ -91,10 +104,11 @@ bot.on("message", async (msg) => {
   }
 });
 
-// Handle captcha klik
+// ================= HANDLE CAPTCHA =================
 bot.on("callback_query", async (q) => {
   try {
 
+    if (!q.data) return;
     if (!q.data.startsWith("captcha_")) return;
 
     const userId = Number(q.data.split("_")[1]);
@@ -109,18 +123,24 @@ bot.on("callback_query", async (q) => {
 
     const data = captchaUsers.get(userId);
 
-    if (!data) return;
+    if (!data) {
+      return bot.answerCallbackQuery(q.id, {
+        text: "⚠️ Captcha sudah kadaluarsa!"
+      });
+    }
 
     // 5. UNMUTE user
     await bot.restrictChatMember(data.chatId, userId, {
-      can_send_messages: true,
-      can_send_media_messages: true,
-      can_send_polls: true,
-      can_send_other_messages: true,
-      can_add_web_page_previews: true,
-      can_invite_users: true,
-      can_change_info: false,
-      can_pin_messages: false
+      permissions: {
+        can_send_messages: true,
+        can_send_media_messages: true,
+        can_send_polls: true,
+        can_send_other_messages: true,
+        can_add_web_page_previews: true,
+        can_invite_users: true,
+        can_change_info: false,
+        can_pin_messages: false
+      }
     });
 
     // Data user
@@ -146,7 +166,7 @@ bot.on("callback_query", async (q) => {
       { parse_mode: "Markdown" }
     );
 
-    // Hapus captcha
+    // Hapus pesan captcha
     await bot.deleteMessage(data.chatId, data.msgId).catch(() => {});
 
     captchaUsers.delete(userId);
@@ -162,7 +182,7 @@ bot.on("callback_query", async (q) => {
   }
 });
 
-// Handle polling error
+// ================= POLLING ERROR =================
 bot.on("polling_error", (err) => {
   console.log("Polling error:", err.message);
 });
