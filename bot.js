@@ -9,12 +9,12 @@ if (!TOKEN) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-console.log("🤖 Bot Anti No Username + Captcha Aktif...");
+console.log("🤖 Bot Captcha Aktif...");
 
-// Simpan user yang belum verifikasi
+// User pending captcha
 const pending = new Map();
 
-// Tangkap join
+// Saat user join
 bot.on("message", async (msg) => {
 
   if (!msg.new_chat_members) return;
@@ -29,23 +29,22 @@ bot.on("message", async (msg) => {
       continue;
     }
 
-    // Mute dulu
+    // Mute user
     await bot.restrictChatMember(chatId, user.id, {
-      permissions: {
-        can_send_messages: false,
-        can_send_media_messages: false,
-        can_send_polls: false,
-        can_send_other_messages: false,
-        can_add_web_page_previews: false,
-        can_change_info: false,
-        can_invite_users: false,
-        can_pin_messages: false
-      }
+      can_send_messages: false,
+      can_send_media_messages: false,
+      can_send_other_messages: false,
+      can_send_polls: false,
+      can_add_web_page_previews: false,
+      can_change_info: false,
+      can_invite_users: false,
+      can_pin_messages: false
     });
 
     // Kirim captcha
-    const sent = await bot.sendMessage(chatId,
-      `👋 Halo ${user.first_name}\nKlik tombol di bawah untuk verifikasi (60 detik)`,
+    const sent = await bot.sendMessage(
+      chatId,
+      `👋 Halo ${user.first_name}\nKlik tombol untuk verifikasi (60 detik)`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -60,7 +59,7 @@ bot.on("message", async (msg) => {
       msgId: sent.message_id
     });
 
-    // Timeout 60 detik
+    // Timeout
     setTimeout(async () => {
 
       if (!pending.has(user.id)) return;
@@ -74,7 +73,7 @@ bot.on("message", async (msg) => {
   }
 });
 
-// Handle klik tombol
+// Saat tombol ditekan
 bot.on("callback_query", async (q) => {
 
   if (!q.data.startsWith("verify_")) return;
@@ -93,18 +92,17 @@ bot.on("callback_query", async (q) => {
   if (!data) return;
 
   try {
-    // Unmute
+
+    // UNMUTE (INI YANG DIPERBAIKI)
     await bot.restrictChatMember(data.chatId, userId, {
-      permissions: {
-        can_send_messages: true,
-        can_send_media_messages: true,
-        can_send_polls: true,
-        can_send_other_messages: true,
-        can_add_web_page_previews: true,
-        can_invite_users: true,
-        can_change_info: false,
-        can_pin_messages: false
-      }
+      can_send_messages: true,
+      can_send_media_messages: true,
+      can_send_other_messages: true,
+      can_send_polls: true,
+      can_add_web_page_previews: true,
+      can_change_info: false,
+      can_invite_users: true,
+      can_pin_messages: false
     });
 
     // Hapus captcha
@@ -117,6 +115,6 @@ bot.on("callback_query", async (q) => {
     });
 
   } catch (err) {
-    console.error(err.message);
+    console.error("Unmute error:", err.message);
   }
 });
