@@ -3,186 +3,166 @@ const TelegramBot = require("node-telegram-bot-api");
 const TOKEN = process.env.TOKEN;
 
 if (!TOKEN) {
-  console.log("❌ TOKEN belum diset!");
+  console.log("TOKEN belum diset!");
   process.exit(1);
 }
 
-const bot = new TelegramBot(TOKEN, {
-  polling: true,
-  request: { timeout: 30000 }
-});
+const bot = new TelegramBot(TOKEN, { polling: true });
 
-console.log("🤖 Bot Anti No Username + Captcha Aktif...");
+console.log("🤖 Bot Captcha + Anti No Username Aktif...");
 
 // Simpan user captcha
 const captchaUsers = new Map();
 
-// ================= HANDLE JOIN =================
-bot.on("message", async (msg) => {
-  try {
+/* =========================
+   SAAT MEMBER MASUK
+========================= */
+bot.on("new_chat_members", async (msg) => {
+  const chatId = msg.chat.id;
 
-    if (!msg.new_chat_members) return;
+  for (const user of msg.new_chat_members) {
 
-    const chatId = msg.chat.id;
+    const userId = user.id;
 
-    for (const user of msg.new_chat_members) {
+    // Kalau tidak ada username → captcha
+    if (!user.username) {
 
-      const userId = user.id;
+      try {
 
-      // 1. Tanpa username = BAN
-      if (!user.username) {
-        await bot.banChatMember(chatId, userId, {
-          revoke_messages: true
+        // Mute dulu
+        await bot.restrictChatMember(chatId, userId, {
+          permissions: {
+            can_send_messages: false,
+            can_send_media_messages: false,
+            can_send_polls: false,
+            can_send_other_messages: false,
+            can_add_web_page_previews: false,
+            can_change_info: false,
+            can_invite_users: false,
+            can_pin_messages: false
+          }
         });
 
-        console.log("Blocked (no username):", userId);
-        continue;
-      }
+        // Simpan captcha
+        captchaUsers.set(userId, chatId);
 
-      // 2. MUTE user (permissions versi baru)
-      await bot.restrictChatMember(chatId, userId, {
-        permissions: {
-          can_send_messages: false,
-          can_send_media_messages: false,
-          can_send_polls: false,
-          can_send_other_messages: false,
-          can_add_web_page_previews: false,
-          can_change_info: false,
-          can_invite_users: false,
-          can_pin_messages: false
-        }
-      });
-
-      // 3. Kirim captcha
-      const sent = await bot.sendMessage(
-        chatId,
-        `👋 Halo ${user.first_name || "User"}!\n\nKlik tombol di bawah untuk verifikasi 👇`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "✅ Saya Manusia",
-                  callback_data: `captcha_${userId}`
-                }
+        // Kirim captcha
+        await bot.sendMessage(chatId,
+          `👋 Halo ${user.first_name}!\n\n` +
+          `Silakan klik tombol di bawah untuk verifikasi 👇`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "✅ Saya Bukan Bot",
+                    callback_data: `captcha_${userId}`
+                  }
+                ]
               ]
-            ]
+            }
           }
-        }
-      );
+        );
 
-      // Simpan data captcha
-      captchaUsers.set(userId, {
-        chatId,
-        msgId: sent.message_id
-      });
+        console.log("Captcha dikirim:", userId);
 
-      // 4. Timeout 60 detik → BAN
-      setTimeout(async () => {
-
-        if (!captchaUsers.has(userId)) return;
-
-        try {
-
-          await bot.banChatMember(chatId, userId, {
-            revoke_messages: true
-          });
-
-          captchaUsers.delete(userId);
-
-          console.log("Blocked (timeout):", userId);
-
-        } catch (e) {
-          console.log("Timeout ban error:", e.message);
-        }
-
-      }, 60000);
+      } catch (err) {
+        console.log("Error mute:", err.message);
+      }
     }
-
-  } catch (err) {
-    console.log("Join error:", err.message);
   }
 });
 
-// ================= HANDLE CAPTCHA =================
-bot.on("callback_query", async (q) => {
+
+/* =========================
+   SAAT CAPTCHA DIKLIK
+========================= */
+bot.on("callback_query", async (query) => {
+
   try {
 
-    if (!q.data) return;
-    if (!q.data.startsWith("captcha_")) return;
+    const data = query.data;
 
-    const userId = Number(q.data.split("_")[1]);
+    if (!data.startsWith("captcha_")) return;
 
-    // Bukan pemilik captcha
-    if (q.from.id !== userId) {
-      return bot.answerCallbackQuery(q.id, {
+    const userId = parseInt(data.split("_")[1]);
+    const clicker = query.from.id;
+
+    // Pastikan yg klik adalah orangnya
+    if (userId !== clicker) {
+      return bot.answerCallbackQuery(query.id, {
         text: "❌ Ini bukan captcha kamu!",
         show_alert: true
       });
     }
 
-    const data = captchaUsers.get(userId);
+    const chatId = captchaUsers.get(userId);
 
-    if (!data) {
-      return bot.answerCallbackQuery(q.id, {
-        text: "⚠️ Captcha sudah kadaluarsa!"
+    if (!chatId) {
+      return bot.answerCallbackQuery(query.id, {
+        text: "⚠️ Data captcha hilang, ulang join ya",
+        show_alert: true
       });
     }
 
-    // 5. UNMUTE user
-    await bot.restrictChatMember(data.chatId, userId, {
+    // Buka mute
+    await bot.restrictChatMember(chatId, userId, {
       permissions: {
         can_send_messages: true,
         can_send_media_messages: true,
         can_send_polls: true,
         can_send_other_messages: true,
         can_add_web_page_previews: true,
-        can_invite_users: true,
         can_change_info: false,
+        can_invite_users: true,
         can_pin_messages: false
       }
     });
 
     // Data user
-    const name =
-      (q.from.first_name || "") +
-      " " +
-      (q.from.last_name || "");
+    const first = query.from.first_name || "-";
+    const last = query.from.last_name || "";
+    const name = `${first} ${last}`.trim();
 
-    const username = q.from.username
-      ? "@" + q.from.username
+    const username = query.from.username
+      ? "@" + query.from.username
       : "Tidak ada";
 
-    const id = q.from.id;
+    const id = query.from.id;
 
-    // 6. Welcome message
-    await bot.sendMessage(
-      data.chatId,
+    // Welcome
+    await bot.sendMessage(chatId,
       `🎉 *Verifikasi Berhasil!*\n\n` +
-      `👤 Nama: ${name.trim()}\n` +
+      `👤 Nama: ${name}\n` +
       `🔗 Username: ${username}\n` +
       `🆔 ID: ${id}\n\n` +
-      `✅ Selamat datang di grup!`,
+      `✅ Selamat datang!`,
       { parse_mode: "Markdown" }
     );
 
-    // Hapus pesan captcha
-    await bot.deleteMessage(data.chatId, data.msgId).catch(() => {});
-
+    // Hapus captcha
     captchaUsers.delete(userId);
 
-    await bot.answerCallbackQuery(q.id, {
+    // Hapus pesan tombol
+    await bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
+
+    // Jawab klik
+    await bot.answerCallbackQuery(query.id, {
       text: "✅ Verifikasi sukses!"
     });
 
-    console.log("Verified:", id);
+    console.log("Verified:", userId);
 
   } catch (err) {
     console.log("Captcha error:", err.message);
   }
+
 });
 
-// ================= POLLING ERROR =================
+
+/* =========================
+   ERROR HANDLER
+========================= */
 bot.on("polling_error", (err) => {
   console.log("Polling error:", err.message);
 });
