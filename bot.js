@@ -1,18 +1,24 @@
 const TelegramBot = require("node-telegram-bot-api");
 
+// Ambil token dari Railway / ENV
 const TOKEN = process.env.TOKEN;
 
 if (!TOKEN) {
-  console.log("TOKEN belum diset!");
+  console.log("❌ TOKEN belum diset!");
   process.exit(1);
 }
 
+// Jalankan bot
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 console.log("🤖 Bot Captcha + Anti No Username Aktif...");
 
 // Simpan user captcha
+// userId => { chatId, msgId, timeout }
 const captchaUsers = new Map();
+
+// Durasi captcha (2 menit)
+const CAPTCHA_TIMEOUT = 2 * 60 * 1000;
 
 /* =========================
    SAAT MEMBER MASUK
@@ -21,15 +27,12 @@ bot.on("new_chat_members", async (msg) => {
   const chatId = msg.chat.id;
 
   for (const user of msg.new_chat_members) {
-
     const userId = user.id;
 
     // Kalau tidak ada username → captcha
     if (!user.username) {
-
       try {
-
-        // Mute dulu
+        // Mute user
         await bot.restrictChatMember(chatId, userId, {
           permissions: {
             can_send_messages: false,
@@ -43,14 +46,14 @@ bot.on("new_chat_members", async (msg) => {
           }
         });
 
-        // Simpan captcha
-        captchaUsers.set(userId, chatId);
-
         // Kirim captcha
-        await bot.sendMessage(chatId,
-          `👋 Halo ${user.first_name}!\n\n` +
-          `Silakan klik tombol di bawah untuk verifikasi 👇`,
+        const sent = await bot.sendMessage(
+          chatId,
+          `👋 Halo *${user.first_name}*\n\n` +
+          `Silakan klik tombol di bawah untuk verifikasi 👇\n` +
+          `⏳ Waktu: 2 menit`,
           {
+            parse_mode: "Markdown",
             reply_markup: {
               inline_keyboard: [
                 [
@@ -63,6 +66,33 @@ bot.on("new_chat_members", async (msg) => {
             }
           }
         );
+
+        // Auto kick kalau timeout
+        const timeout = setTimeout(async () => {
+          if (captchaUsers.has(userId)) {
+            try {
+              await bot.banChatMember(chatId, userId);
+              await bot.unbanChatMember(chatId, userId);
+
+              await bot.sendMessage(
+                chatId,
+                `🚫 User *${user.first_name}* gagal verifikasi dan dikeluarkan.`,
+                { parse_mode: "Markdown" }
+              );
+
+              captchaUsers.delete(userId);
+            } catch (e) {
+              console.log("Kick error:", e.message);
+            }
+          }
+        }, CAPTCHA_TIMEOUT);
+
+        // Simpan data captcha
+        captchaUsers.set(userId, {
+          chatId,
+          msgId: sent.message_id,
+          timeout
+        });
 
         console.log("Captcha dikirim:", userId);
 
@@ -78,17 +108,15 @@ bot.on("new_chat_members", async (msg) => {
    SAAT CAPTCHA DIKLIK
 ========================= */
 bot.on("callback_query", async (query) => {
-
   try {
-
     const data = query.data;
 
-    if (!data.startsWith("captcha_")) return;
+    if (!data || !data.startsWith("captcha_")) return;
 
     const userId = parseInt(data.split("_")[1]);
     const clicker = query.from.id;
 
-    // Pastikan yg klik adalah orangnya
+    // Cegah orang lain klik
     if (userId !== clicker) {
       return bot.answerCallbackQuery(query.id, {
         text: "❌ Ini bukan captcha kamu!",
@@ -96,16 +124,21 @@ bot.on("callback_query", async (query) => {
       });
     }
 
-    const chatId = captchaUsers.get(userId);
+    const dataUser = captchaUsers.get(userId);
 
-    if (!chatId) {
+    if (!dataUser) {
       return bot.answerCallbackQuery(query.id, {
-        text: "⚠️ Data captcha hilang, ulang join ya",
+        text: "⚠️ Captcha sudah expired!",
         show_alert: true
       });
     }
 
-    // Buka mute
+    const { chatId, msgId, timeout } = dataUser;
+
+    // Hapus timeout kick
+    clearTimeout(timeout);
+
+    // Unmute user
     await bot.restrictChatMember(chatId, userId, {
       permissions: {
         can_send_messages: true,
@@ -130,23 +163,25 @@ bot.on("callback_query", async (query) => {
 
     const id = query.from.id;
 
-    // Welcome
-    await bot.sendMessage(chatId,
-      `🎉 *Verifikasi Berhasil!*\n\n` +
+    // Welcome message
+    await bot.sendMessage(
+      chatId,
+      `🎉 *VERIFIKASI BERHASIL!*\n\n` +
       `👤 Nama: ${name}\n` +
       `🔗 Username: ${username}\n` +
       `🆔 ID: ${id}\n\n` +
-      `✅ Selamat datang!`,
+      `✅ Selamat datang di grup!\n` +
+      `💬 Silakan ngobrol dengan sopan 😊`,
       { parse_mode: "Markdown" }
     );
 
-    // Hapus captcha
+    // Hapus pesan captcha
+    await bot.deleteMessage(chatId, msgId).catch(() => {});
+
+    // Hapus data
     captchaUsers.delete(userId);
 
-    // Hapus pesan tombol
-    await bot.deleteMessage(chatId, query.message.message_id).catch(() => {});
-
-    // Jawab klik
+    // Jawab tombol
     await bot.answerCallbackQuery(query.id, {
       text: "✅ Verifikasi sukses!"
     });
@@ -156,7 +191,6 @@ bot.on("callback_query", async (query) => {
   } catch (err) {
     console.log("Captcha error:", err.message);
   }
-
 });
 
 
@@ -165,4 +199,8 @@ bot.on("callback_query", async (query) => {
 ========================= */
 bot.on("polling_error", (err) => {
   console.log("Polling error:", err.message);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.log("Unhandled:", err.message);
 });
