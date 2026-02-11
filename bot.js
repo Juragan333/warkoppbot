@@ -1,4 +1,5 @@
 const TelegramBot = require("node-telegram-bot-api");
+const http = require("http");
 
 // Ambil token dari ENV (Railway)
 const TOKEN = process.env.TOKEN;
@@ -25,8 +26,9 @@ const captchaUsers = new Map();
 // Timeout 2 menit
 const CAPTCHA_TIMEOUT = 2 * 60 * 1000;
 
+
 /* =========================
-   DETEK MEMBER MASUK (STABIL)
+   DETEK MEMBER MASUK
 ========================= */
 bot.on("message", async (msg) => {
 
@@ -218,4 +220,20 @@ bot.on("polling_error", (err) => {
 
 process.on("unhandledRejection", (err) => {
   console.log("Unhandled:", err.message);
+});
+
+
+/* =========================
+   KEEP ALIVE SERVER
+   (ANTI MATI DI RAILWAY)
+========================= */
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("Bot is running 🚀");
+});
+
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log("Web server running on port", PORT);
 });
