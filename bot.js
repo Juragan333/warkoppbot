@@ -1,5 +1,6 @@
 const TelegramBot = require("node-telegram-bot-api");
 
+// ENV TOKEN
 const TOKEN = process.env.TOKEN;
 
 if (!TOKEN) {
@@ -7,57 +8,70 @@ if (!TOKEN) {
   process.exit(1);
 }
 
+// Start bot
 const bot = new TelegramBot(TOKEN, {
-  polling: true,
-  request: { timeout: 30000 }
+  polling: {
+    autoStart: true,
+    params: {
+      timeout: 60
+    }
+  }
 });
 
-console.log("🤖 Bot Anti No Username + Captcha Aktif...");
+console.log("🤖 Bot Captcha + Anti No Username Aktif...");
 
-// Simpan user yg lagi captcha
+// userId => { chatId, msgId, timeout }
 const captchaUsers = new Map();
 
-// Handle user join
-bot.on("message", async (msg) => {
+// 2 menit
+const CAPTCHA_TIMEOUT = 2 * 60 * 1000;
+
+/* =========================
+   DETEKSI MEMBER BARU
+========================= */
+bot.on("chat_member", async (msg) => {
   try {
-
-    if (!msg.new_chat_members) return;
-
     const chatId = msg.chat.id;
 
-    for (const user of msg.new_chat_members) {
+    const oldStatus = msg.old_chat_member.status;
+    const newStatus = msg.new_chat_member.status;
 
+    // Kalau user baru join
+    if (
+      oldStatus === "left" &&
+      (newStatus === "member" || newStatus === "restricted")
+    ) {
+      const user = msg.new_chat_member.user;
       const userId = user.id;
 
-      // 1. Tanpa username = BAN
-      if (!user.username) {
-        await bot.banChatMember(chatId, userId);
-        console.log("Blocked (no username):", userId);
-        continue;
-      }
+      // Kalau ada username → skip
+      if (user.username) return;
 
-      // 2. Mute user
+      console.log("User join:", userId);
+
+      // Mute
       await bot.restrictChatMember(chatId, userId, {
-        can_send_messages: false,
-        can_send_media_messages: false,
-        can_send_polls: false,
-        can_send_other_messages: false,
-        can_add_web_page_previews: false,
-        can_change_info: false,
-        can_invite_users: false,
-        can_pin_messages: false
+        permissions: {
+          can_send_messages: false,
+          can_send_media_messages: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false
+        }
       });
 
-      // 3. Kirim captcha
+      // Kirim captcha
       const sent = await bot.sendMessage(
         chatId,
-        `👋 Halo ${user.first_name}!\n\nKlik tombol di bawah untuk verifikasi 👇`,
+        `👋 Halo *${user.first_name}*\n\n` +
+        `Klik tombol untuk verifikasi 👇\n` +
+        `⏳ 2 menit`,
         {
+          parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
               [
                 {
-                  text: "✅ Saya Manusia",
+                  text: "✅ Saya Bukan Bot",
                   callback_data: `captcha_${userId}`
                 }
               ]
@@ -66,24 +80,34 @@ bot.on("message", async (msg) => {
         }
       );
 
-      // Simpan data
+      // Timeout kick
+      const timeout = setTimeout(async () => {
+        if (captchaUsers.has(userId)) {
+          try {
+            await bot.banChatMember(chatId, userId);
+            await bot.unbanChatMember(chatId, userId);
+
+            await bot.sendMessage(
+              chatId,
+              `🚫 *${user.first_name}* gagal verifikasi.`,
+              { parse_mode: "Markdown" }
+            );
+
+            captchaUsers.delete(userId);
+          } catch (e) {
+            console.log("Kick error:", e.message);
+          }
+        }
+      }, CAPTCHA_TIMEOUT);
+
+      // Simpan
       captchaUsers.set(userId, {
         chatId,
-        msgId: sent.message_id
+        msgId: sent.message_id,
+        timeout
       });
 
-      // 4. Timeout 60 detik → BAN
-      setTimeout(async () => {
-
-        if (!captchaUsers.has(userId)) return;
-
-        try {
-          await bot.banChatMember(chatId, userId);
-          captchaUsers.delete(userId);
-          console.log("Blocked (timeout):", userId);
-        } catch (e) {}
-
-      }, 60000);
+      console.log("Captcha dikirim:", userId);
     }
 
   } catch (err) {
@@ -91,39 +115,47 @@ bot.on("message", async (msg) => {
   }
 });
 
-// Handle captcha klik
+
+/* =========================
+   CAPTCHA CLICK
+========================= */
 bot.on("callback_query", async (q) => {
   try {
+    if (!q.data || !q.data.startsWith("captcha_")) return;
 
-    if (!q.data.startsWith("captcha_")) return;
+    const userId = parseInt(q.data.split("_")[1]);
+    const clicker = q.from.id;
 
-    const userId = Number(q.data.split("_")[1]);
-
-    // Bukan pemilik captcha
-    if (q.from.id !== userId) {
+    if (userId !== clicker) {
       return bot.answerCallbackQuery(q.id, {
-        text: "❌ Ini bukan captcha kamu!",
+        text: "❌ Bukan captcha kamu!",
         show_alert: true
       });
     }
 
     const data = captchaUsers.get(userId);
 
-    if (!data) return;
+    if (!data) {
+      return bot.answerCallbackQuery(q.id, {
+        text: "⚠️ Captcha expired!",
+        show_alert: true
+      });
+    }
 
-    // 5. UNMUTE user
-    await bot.restrictChatMember(data.chatId, userId, {
-      can_send_messages: true,
-      can_send_media_messages: true,
-      can_send_polls: true,
-      can_send_other_messages: true,
-      can_add_web_page_previews: true,
-      can_invite_users: true,
-      can_change_info: false,
-      can_pin_messages: false
+    const { chatId, msgId, timeout } = data;
+
+    clearTimeout(timeout);
+
+    // Unmute
+    await bot.restrictChatMember(chatId, userId, {
+      permissions: {
+        can_send_messages: true,
+        can_send_media_messages: true,
+        can_send_other_messages: true,
+        can_add_web_page_previews: true
+      }
     });
 
-    // Data user
     const name =
       (q.from.first_name || "") +
       " " +
@@ -133,21 +165,18 @@ bot.on("callback_query", async (q) => {
       ? "@" + q.from.username
       : "Tidak ada";
 
-    const id = q.from.id;
-
-    // 6. Welcome message
+    // Welcome
     await bot.sendMessage(
-      data.chatId,
-      `🎉 *Verifikasi Berhasil!*\n\n` +
-      `👤 Nama: ${name.trim()}\n` +
-      `🔗 Username: ${username}\n` +
-      `🆔 ID: ${id}\n\n` +
-      `✅ Selamat datang di grup!`,
+      chatId,
+      `🎉 *VERIFIKASI BERHASIL!*\n\n` +
+      `👤 ${name.trim()}\n` +
+      `🔗 ${username}\n` +
+      `🆔 ${q.from.id}\n\n` +
+      `✅ Selamat datang!`,
       { parse_mode: "Markdown" }
     );
 
-    // Hapus captcha
-    await bot.deleteMessage(data.chatId, data.msgId).catch(() => {});
+    await bot.deleteMessage(chatId, msgId).catch(() => {});
 
     captchaUsers.delete(userId);
 
@@ -155,14 +184,21 @@ bot.on("callback_query", async (q) => {
       text: "✅ Verifikasi sukses!"
     });
 
-    console.log("Verified:", id);
+    console.log("Verified:", userId);
 
   } catch (err) {
     console.log("Captcha error:", err.message);
   }
 });
 
-// Handle polling error
-bot.on("polling_error", (err) => {
-  console.log("Polling error:", err.message);
+
+/* =========================
+   ERROR
+========================= */
+bot.on("polling_error", (e) => {
+  console.log("Polling:", e.message);
+});
+
+process.on("unhandledRejection", (e) => {
+  console.log("Unhandled:", e);
 });
