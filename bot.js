@@ -1,6 +1,6 @@
 const TelegramBot = require("node-telegram-bot-api");
 
-// Token dari ENV Railway
+// Ambil token
 const TOKEN = process.env.TOKEN;
 
 if (!TOKEN) {
@@ -13,16 +13,15 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 
 console.log("🤖 Bot Captcha + Anti No Username Aktif...");
 
-// Simpan data captcha
+// Simpan captcha
 // userId => { chatId, msgId, timeout }
 const captchaUsers = new Map();
 
 // Timeout 2 menit
 const CAPTCHA_TIMEOUT = 2 * 60 * 1000;
 
-
 /* =========================
-   SAAT USER MASUK
+   MEMBER MASUK
 ========================= */
 bot.on("new_chat_members", async (msg) => {
   const chatId = msg.chat.id;
@@ -33,14 +32,14 @@ bot.on("new_chat_members", async (msg) => {
     // Hanya user tanpa username
     if (!user.username) {
       try {
-
-        // MUTE (FORMAT BENAR)
+        // Mute user (FORMAT AMAN)
         await bot.restrictChatMember(chatId, userId, {
           can_send_messages: false,
           can_send_media_messages: false,
           can_send_polls: false,
           can_send_other_messages: false,
           can_add_web_page_previews: false,
+          can_change_info: false,
           can_invite_users: false,
           can_pin_messages: false
         });
@@ -66,7 +65,7 @@ bot.on("new_chat_members", async (msg) => {
           }
         );
 
-        // Timeout kick
+        // Timeout auto kick
         const timeout = setTimeout(async () => {
           if (captchaUsers.has(userId)) {
             try {
@@ -104,57 +103,60 @@ bot.on("new_chat_members", async (msg) => {
 
 
 /* =========================
-   SAAT CAPTCHA DIKLIK
+   CAPTCHA DIKLIK
 ========================= */
-bot.on("callback_query", async (q) => {
+bot.on("callback_query", async (query) => {
   try {
+    const data = query.data;
 
-    if (!q.data || !q.data.startsWith("captcha_")) return;
+    if (!data || !data.startsWith("captcha_")) return;
 
-    const userId = Number(q.data.split("_")[1]);
-    const clicker = q.from.id;
+    const userId = parseInt(data.split("_")[1]);
+    const clicker = query.from.id;
 
     // Cegah orang lain klik
     if (userId !== clicker) {
-      return bot.answerCallbackQuery(q.id, {
+      return bot.answerCallbackQuery(query.id, {
         text: "❌ Ini bukan captcha kamu!",
         show_alert: true
       });
     }
 
-    const data = captchaUsers.get(userId);
+    const dataUser = captchaUsers.get(userId);
 
-    if (!data) {
-      return bot.answerCallbackQuery(q.id, {
+    if (!dataUser) {
+      return bot.answerCallbackQuery(query.id, {
         text: "⚠️ Captcha expired!",
         show_alert: true
       });
     }
 
-    const { chatId, msgId, timeout } = data;
+    const { chatId, msgId, timeout } = dataUser;
 
     clearTimeout(timeout);
 
-    // UNMUTE (FORMAT BENAR)
+    // Unmute (FORMAT AMAN)
     await bot.restrictChatMember(chatId, userId, {
       can_send_messages: true,
       can_send_media_messages: true,
       can_send_polls: true,
       can_send_other_messages: true,
       can_add_web_page_previews: true,
+      can_change_info: false,
       can_invite_users: true,
       can_pin_messages: false
     });
 
     // Data user
-    const name =
-      `${q.from.first_name || ""} ${q.from.last_name || ""}`.trim();
+    const first = query.from.first_name || "-";
+    const last = query.from.last_name || "";
+    const name = `${first} ${last}`.trim();
 
-    const username = q.from.username
-      ? "@" + q.from.username
+    const username = query.from.username
+      ? "@" + query.from.username
       : "Tidak ada";
 
-    const id = q.from.id;
+    const id = query.from.id;
 
     // Welcome
     await bot.sendMessage(
@@ -163,15 +165,17 @@ bot.on("callback_query", async (q) => {
       `👤 Nama: ${name}\n` +
       `🔗 Username: ${username}\n` +
       `🆔 ID: ${id}\n\n` +
-      `✅ Selamat datang 😊`,
+      `✅ Selamat datang!\n` +
+      `💬 Silakan ngobrol 😊`,
       { parse_mode: "Markdown" }
     );
 
     // Hapus captcha
     await bot.deleteMessage(chatId, msgId).catch(() => {});
+
     captchaUsers.delete(userId);
 
-    await bot.answerCallbackQuery(q.id, {
+    await bot.answerCallbackQuery(query.id, {
       text: "✅ Verifikasi sukses!"
     });
 
@@ -190,6 +194,6 @@ bot.on("polling_error", (err) => {
   console.log("Polling error:", err.message);
 });
 
-process.on("unhandledRejection", (e) => {
-  console.log("Unhandled:", e.message);
+process.on("unhandledRejection", (err) => {
+  console.log("Unhandled:", err.message);
 });
