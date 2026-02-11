@@ -1,6 +1,8 @@
+process.env.NTBA_FIX_319 = 1;
+
 const TelegramBot = require("node-telegram-bot-api");
 
-// Ambil token dari Railway / ENV
+// Ambil token dari ENV
 const TOKEN = process.env.TOKEN;
 
 if (!TOKEN) {
@@ -17,7 +19,7 @@ console.log("🤖 Bot Captcha + Anti No Username Aktif...");
 // userId => { chatId, msgId, timeout }
 const captchaUsers = new Map();
 
-// Durasi captcha (2 menit)
+// Waktu captcha (2 menit)
 const CAPTCHA_TIMEOUT = 2 * 60 * 1000;
 
 /* =========================
@@ -32,18 +34,15 @@ bot.on("new_chat_members", async (msg) => {
     // Kalau tidak ada username → captcha
     if (!user.username) {
       try {
-        // Mute user
+        // Mute user dulu
         await bot.restrictChatMember(chatId, userId, {
-          permissions: {
-            can_send_messages: false,
-            can_send_media_messages: false,
-            can_send_polls: false,
-            can_send_other_messages: false,
-            can_add_web_page_previews: false,
-            can_change_info: false,
-            can_invite_users: false,
-            can_pin_messages: false
-          }
+          can_send_messages: false,
+          can_send_media_messages: false,
+          can_send_polls: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+          can_invite_users: false,
+          can_pin_messages: false
         });
 
         // Kirim captcha
@@ -67,22 +66,22 @@ bot.on("new_chat_members", async (msg) => {
           }
         );
 
-        // Auto kick kalau timeout
+        // Timeout captcha (mute permanen kalau gagal)
         const timeout = setTimeout(async () => {
           if (captchaUsers.has(userId)) {
             try {
-              await bot.banChatMember(chatId, userId);
-              await bot.unbanChatMember(chatId, userId);
+              await bot.restrictChatMember(chatId, userId, {
+                can_send_messages: false
+              });
 
               await bot.sendMessage(
                 chatId,
-                `🚫 User *${user.first_name}* gagal verifikasi dan dikeluarkan.`,
-                { parse_mode: "Markdown" }
+                `🚫 ${user.first_name} gagal verifikasi (timeout).\nSilakan join ulang.`
               );
 
               captchaUsers.delete(userId);
             } catch (e) {
-              console.log("Kick error:", e.message);
+              console.log("Timeout error:", e.message);
             }
           }
         }, CAPTCHA_TIMEOUT);
@@ -135,21 +134,18 @@ bot.on("callback_query", async (query) => {
 
     const { chatId, msgId, timeout } = dataUser;
 
-    // Hapus timeout kick
+    // Hapus timeout
     clearTimeout(timeout);
 
     // Unmute user
     await bot.restrictChatMember(chatId, userId, {
-      permissions: {
-        can_send_messages: true,
-        can_send_media_messages: true,
-        can_send_polls: true,
-        can_send_other_messages: true,
-        can_add_web_page_previews: true,
-        can_change_info: false,
-        can_invite_users: true,
-        can_pin_messages: false
-      }
+      can_send_messages: true,
+      can_send_media_messages: true,
+      can_send_polls: true,
+      can_send_other_messages: true,
+      can_add_web_page_previews: true,
+      can_invite_users: true,
+      can_pin_messages: false
     });
 
     // Data user
@@ -163,7 +159,7 @@ bot.on("callback_query", async (query) => {
 
     const id = query.from.id;
 
-    // Welcome message
+    // Welcome
     await bot.sendMessage(
       chatId,
       `🎉 *VERIFIKASI BERHASIL!*\n\n` +
@@ -203,4 +199,8 @@ bot.on("polling_error", (err) => {
 
 process.on("unhandledRejection", (err) => {
   console.log("Unhandled:", err.message);
+});
+
+process.on("uncaughtException", (err) => {
+  console.log("Uncaught:", err.message);
 });
